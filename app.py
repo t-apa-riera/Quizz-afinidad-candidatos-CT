@@ -11,7 +11,11 @@ st.markdown("Descubre qué candidato se alinea mejor con tus ideas mediante vota
 # 1. ESTADO DE LA APLICACIÓN
 cargo = "CT Ingeniería"
 preguntas_cargo = PREGUNTAS[cargo]
-ejes_unicos = list(set([p['eje'] for p in preguntas_cargo]))
+# Mantener el orden original de los ejes según aparecen en PREGUNTAS
+ejes_unicos = []
+for p in preguntas_cargo:
+    if p['eje'] not in ejes_unicos:
+        ejes_unicos.append(p['eje'])
 
 if 'respuestas' not in st.session_state:
     st.session_state.respuestas = {}
@@ -36,7 +40,7 @@ for i, p in enumerate(preguntas_cargo):
 
 # 3. EL SEGUNDO FILTRO (Ponderación)
 st.subheader("⭐ Segundo Filtro: Tus Prioridades")
-st.markdown("Para afinar tu resultado, selecciona los **3 temas** que consideras más urgentes para la Escuela. Las propuestas que elijas en estas áreas tendrán doble puntaje.")
+st.markdown("Selecciona hasta **3 temas** que consideras más urgentes para la Escuela. Esto nos dirá quién te representa mejor en lo que más te importa.")
 prioridades = st.multiselect(
     "Selecciona hasta 3 temas:",
     ejes_unicos,
@@ -51,43 +55,67 @@ if st.button("Ver mi candidato más afín 📊", type="primary"):
         st.error("Por favor, responde todas las preguntas para ver tu resultado.")
     else:
         # Inicializar contadores
-        puntos = {candidato: 0 for candidato in CANDIDATOS[cargo]}
-        puntos_por_eje = {candidato: {eje: 0 for eje in ejes_unicos} for candidato in CANDIDATOS[cargo]}
+        puntos_generales = {c: 0 for c in CANDIDATOS[cargo]}
+        puntos_prioridades = {c: 0 for c in CANDIDATOS[cargo]}
+        ganadores_por_eje = {eje: [] for eje in ejes_unicos}
         
         # Calcular puntajes
         for i, p in enumerate(preguntas_cargo):
             respuesta_usuario = st.session_state.respuestas[i]
             eje = p['eje']
             
-            # Multiplicador del Segundo Filtro
-            valor_punto = 2 if eje in prioridades else 1
-            
             for op in p['opciones']:
                 if op['texto'] == respuesta_usuario:
                     for cand in op['candidatos']:
-                        puntos[cand] += valor_punto
-                        puntos_por_eje[cand][eje] += valor_punto
+                        puntos_generales[cand] += 1
+                        ganadores_por_eje[eje].append(cand)
+                        if eje in prioridades:
+                            puntos_prioridades[cand] += 1
 
-        # Mostrar Resultados
+        # 1. GANADOR GENERAL
+        ranking_general = sorted(puntos_generales.items(), key=lambda x: x[1], reverse=True)
+        ganador_general = ranking_general[0][0]
+        
+        # 2. GANADOR PRIORIDADES
+        if prioridades:
+            ranking_prioridades = sorted(puntos_prioridades.items(), key=lambda x: x[1], reverse=True)
+            ganador_prioridad = ranking_prioridades[0][0]
+            puntos_max_prio = ranking_prioridades[0][1]
+        else:
+            ganador_prioridad = None
+            puntos_max_prio = 0
+
+        # --- MOSTRAR RESULTADOS ---
         st.header("🏆 Tu Match Electoral")
         
-        ranking = sorted(puntos.items(), key=lambda x: x[1], reverse=True)
-        ganador = ranking[0][0]
+        # A. Afinidad General
+        st.success(f"### 🥇 Candidato más afín general: **{ganador_general}**")
+        st.write("Este candidato es el que sumó más puntos tomando en cuenta todas tus respuestas por igual.")
         
-        st.success(f"### Tu mayor afinidad es con: **{ganador}**")
-        
-        # Gráfico General
-        df_general = pd.DataFrame(ranking, columns=["Candidato", "Puntos"])
-        fig_bar = px.bar(df_general, x="Puntos", y="Candidato", orientation='h', color="Candidato")
-        st.plotly_chart(fig_bar, use_container_width=True)
+        # B. Afinidad por Prioridad
+        if prioridades and puntos_max_prio > 0:
+            st.info(f"### ⭐ Candidato más afín en tus prioridades: **{ganador_prioridad}**")
+            st.write(f"Este candidato es el que más te representa exclusivamente en las áreas que marcaste como urgentes ({', '.join(prioridades)}).")
+        elif prioridades and puntos_max_prio == 0:
+            st.info("### ⭐ Candidato más afín en tus prioridades: **Ninguno**")
+            st.write("Curiosamente, tus respuestas en las áreas prioritarias no sumaron puntos para ningún candidato específico (puedes haber elegido opciones sin candidato o hubo un empate en 0).")
 
-        # Gráfico Radar
-        st.header("🎯 Desglose por Áreas")
-        datos_radar = []
-        for cand, ejes in puntos_por_eje.items():
-            for eje_nombre, puntaje in ejes.items():
-                datos_radar.append({"Candidato": cand, "Eje": eje_nombre, "Puntos": puntaje})
+        # C. Lista por Área Temática
+        st.subheader("🎯 Tu candidato ideal por área temática")
+        st.markdown("Este es el detalle de quién te representa en cada eje específico según tus respuestas:")
         
-        df_radar = pd.DataFrame(datos_radar)
-        fig_radar = px.line_polar(df_radar, r='Puntos', theta='Eje', color='Candidato', line_close=True)
-        st.plotly_chart(fig_radar, use_container_width=True)
+        for eje in ejes_unicos:
+            # En caso de que la opción seleccionada tenga más de un candidato (ej: Lista 1A)
+            candidatos_eje = " y ".join(ganadores_por_eje[eje])
+            st.markdown(f"- **{eje}:** {candidatos_eje}")
+        
+        st.divider()
+
+        # D. Gráfico de Respaldo Visual
+        st.subheader("📊 Desglose de Afinidad General")
+        df_general = pd.DataFrame(ranking_general, columns=["Candidato", "Puntos"])
+        # Filtrar solo los que tienen más de 0 puntos para un gráfico más limpio
+        df_general = df_general[df_general["Puntos"] > 0]
+        fig_bar = px.bar(df_general, x="Puntos", y="Candidato", orientation='h', color="Candidato")
+        fig_bar.update_layout(showlegend=False)
+        st.plotly_chart(fig_bar, use_container_width=True)
